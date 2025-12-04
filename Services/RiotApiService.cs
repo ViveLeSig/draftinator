@@ -172,5 +172,6 @@ namespace OverlayApp.Services
         public SummonerDto Summoner { get; set; } = new();
         public List<ChampionMasteryDto> TopChampions { get; set; } = new();
         public List<string> RecentMatchIds { get; set; } = new();
+        public string Role { get; set; } = string.Empty; // TOP, JUNGLE, MID, BOTTOM, SUPPORT
     }
 }
