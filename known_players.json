@@ -1,5 +1,42 @@
-{
-  "freckledman": "EUW",
-  "sonicscrewdriver": "EUW",
-  "godfather s": "EUW"
-}
+[
+  {
+    "gameName": "freckledman",
+    "tagLine": "EUW",
+    "preferredRole": "TOP"
+  },
+  {
+    "gameName": "sonicscrewdriver",
+    "tagLine": "EUW",
+    "preferredRole": "MID"
+  },
+  {
+    "gameName": "godfather s",
+    "tagLine": "EUW",
+    "preferredRole": "JUNGLE"
+  },
+  {
+    "gameName": "Darioush",
+    "tagLine": "CRABE",
+    "preferredRole": "TOP"
+  },
+  {
+    "gameName": "OUGOUG",
+    "tagLine": "SINJ3",
+    "preferredRole": "JUNGLE"
+  },
+  {
+    "gameName": "OUGOUG",
+    "tagLine": "SINJ2",
+    "preferredRole": "MID"
+  },
+  {
+    "gameName": "OUGOUG",
+    "tagLine": "SINJ4",
+    "preferredRole": "SUPPORT"
+  },
+  {
+    "gameName": "IdRatherPlayPkm",
+    "tagLine": "Isck",
+    "preferredRole": "BOTTOM"
+  }
+]

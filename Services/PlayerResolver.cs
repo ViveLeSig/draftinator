@@ -13,7 +13,7 @@ namespace OverlayApp.Services
     public class PlayerResolver
     {
         private readonly RiotApiService _riotApi;
-        private Dictionary<string, string> _knownPlayers; // gameName -> tagLine
+        private List<PlayerEntry> _knownPlayers; // Liste de joueurs connus avec rôle préféré optionnel
         private readonly string _configFile = "known_players.json";
         
         // TagLines courants à essayer en priorité pour la région EUW
@@ -30,68 +30,78 @@ namespace OverlayApp.Services
         }
 
         /// <summary>
-        /// Résout un gameName en un compte Riot complet en essayant différents tagLines
-        /// </summary>
-        public async Task<(string gameName, string tagLine)?> ResolvePlayerAsync(string gameName)
-        {
-            if (string.IsNullOrWhiteSpace(gameName))
-                return null;
-
-            // Nettoyer le gameName
-            gameName = gameName.Trim();
-
-            // 1. Vérifier si on connaît déjà ce joueur
-            if (_knownPlayers.TryGetValue(gameName.ToLower(), out var knownTagLine))
-            {
-                Console.WriteLine($"Joueur connu trouvé: {gameName}#{knownTagLine}");
-                return (gameName, knownTagLine);
-            }
-
-            // 2. Essayer les tagLines courants
-            Console.WriteLine($"Recherche de {gameName} avec les tagLines courants...");
-            foreach (var tagLine in _commonTagLines)
-            {
-                var account = await _riotApi.GetAccountByRiotIdAsync(gameName, tagLine);
-                if (account != null)
-                {
-                    Console.WriteLine($"✓ Trouvé: {gameName}#{tagLine}");
-                    
-                    // Sauvegarder pour la prochaine fois
-                    AddKnownPlayer(gameName, tagLine);
-                    
-                    return (gameName, tagLine);
-                }
-                
-                // Petit délai pour éviter le rate limiting
-                await Task.Delay(100);
-            }
-
-            Console.WriteLine($"✗ Impossible de résoudre: {gameName}");
-            return null;
-        }
-
-        /// <summary>
         /// Ajoute un joueur connu à la base de données
         /// </summary>
-        public void AddKnownPlayer(string gameName, string tagLine)
+        public void AddKnownPlayer(string gameName, string tagLine, string role = "")
         {
-            _knownPlayers[gameName.ToLower()] = tagLine;
-            SaveKnownPlayers();
+            // Vérifier si cette combinaison existe déjà
+            var existing = _knownPlayers.FirstOrDefault(p => 
+                p.gameName.Equals(gameName, StringComparison.OrdinalIgnoreCase) && 
+                p.tagLine.Equals(tagLine, StringComparison.OrdinalIgnoreCase));
+            
+            if (existing != null)
+            {
+                // Mettre à jour le rôle si fourni et pas déjà défini
+                if (!string.IsNullOrEmpty(role) && string.IsNullOrEmpty(existing.preferredRole))
+                {
+                    existing.preferredRole = role;
+                    SaveKnownPlayers();
+                }
+            }
+            else
+            {
+                _knownPlayers.Add(new PlayerEntry
+                {
+                    gameName = gameName,
+                    tagLine = tagLine,
+                    preferredRole = role
+                });
+                SaveKnownPlayers();
+            }
         }
 
         /// <summary>
         /// Charge la liste des joueurs connus depuis le fichier
         /// </summary>
-        private Dictionary<string, string> LoadKnownPlayers()
+        private List<PlayerEntry> LoadKnownPlayers()
         {
             try
             {
                 if (File.Exists(_configFile))
                 {
                     var json = File.ReadAllText(_configFile);
-                    var loaded = JsonSerializer.Deserialize<Dictionary<string, string>>(json);
-                    Console.WriteLine($"Chargé {loaded?.Count ?? 0} joueurs connus");
-                    return loaded ?? new Dictionary<string, string>();
+                    
+                    // Essayer de charger le nouveau format avec preferredRole
+                    try
+                    {
+                        var players = JsonSerializer.Deserialize<List<PlayerEntry>>(json);
+                        if (players != null)
+                        {
+                            Console.WriteLine($"Chargé {players.Count} joueurs connus");
+                            return players;
+                        }
+                    }
+                    catch
+                    {
+                        // Si échec, essayer l'ancien format (dictionnaire)
+                        var oldFormat = JsonSerializer.Deserialize<Dictionary<string, string>>(json);
+                        if (oldFormat != null)
+                        {
+                            var result = oldFormat.Select(kv => new PlayerEntry
+                            {
+                                gameName = kv.Key,
+                                tagLine = kv.Value,
+                                preferredRole = "" // Pas de rôle dans l'ancien format
+                            }).ToList();
+                            Console.WriteLine($"Chargé {result.Count} joueurs connus (ancien format) - migration automatique");
+                            
+                            // Sauvegarder au nouveau format
+                            _knownPlayers = result;
+                            SaveKnownPlayers();
+                            
+                            return result;
+                        }
+                    }
                 }
             }
             catch (Exception ex)
@@ -99,7 +109,7 @@ namespace OverlayApp.Services
                 Console.WriteLine($"Erreur chargement joueurs connus: {ex.Message}");
             }
 
-            return new Dictionary<string, string>();
+            return new List<PlayerEntry>();
         }
 
         /// <summary>
@@ -122,28 +132,126 @@ namespace OverlayApp.Services
             }
         }
 
+        private class PlayerEntry
+        {
+            public string gameName { get; set; } = "";
+            public string tagLine { get; set; } = "";
+            public string preferredRole { get; set; } = ""; // Role préféré (TOP, JUNGLE, MID, BOTTOM, SUPPORT)
+        }
+
         /// <summary>
-        /// Résout plusieurs joueurs en parallèle
+        /// Résout plusieurs joueurs en évitant les doublons (pour gérer les pseudos identiques)
         /// </summary>
         public async Task<List<(string gameName, string tagLine, string role)>> ResolvePlayersAsync(
             List<(string gameName, string role)> players)
         {
             var results = new List<(string gameName, string tagLine, string role)>();
+            var usedAccounts = new HashSet<string>(); // Pour tracker les comptes déjà utilisés
 
             foreach (var (gameName, role) in players)
             {
-                var resolved = await ResolvePlayerAsync(gameName);
+                var resolved = await ResolvePlayerWithoutDuplicatesAsync(gameName, role, usedAccounts);
                 if (resolved.HasValue)
                 {
+                    var accountKey = $"{resolved.Value.gameName}#{resolved.Value.tagLine}".ToLower();
+                    usedAccounts.Add(accountKey);
                     results.Add((resolved.Value.gameName, resolved.Value.tagLine, role));
+                    Console.WriteLine($"✓ Résolu: {gameName} -> {resolved.Value.gameName}#{resolved.Value.tagLine} ({role})");
                 }
                 else
                 {
-                    Console.WriteLine($"Impossible de résoudre {gameName} pour le rôle {role}");
+                    Console.WriteLine($"✗ Impossible de résoudre {gameName} pour le rôle {role}");
                 }
             }
 
             return results;
+        }
+
+        /// <summary>
+        /// Résout un gameName en excluant les comptes déjà utilisés et en priorisant le rôle
+        /// </summary>
+        private async Task<(string gameName, string tagLine)?> ResolvePlayerWithoutDuplicatesAsync(
+            string gameName,
+            string role,
+            HashSet<string> usedAccounts)
+        {
+            if (string.IsNullOrWhiteSpace(gameName))
+                return null;
+
+            gameName = gameName.Trim();
+
+            // 1. Vérifier les joueurs connus avec le même rôle en priorité
+            var knownMatchesWithRole = _knownPlayers
+                .Where(p => p.gameName.Equals(gameName, StringComparison.OrdinalIgnoreCase))
+                .Where(p => !string.IsNullOrEmpty(p.preferredRole) && 
+                           p.preferredRole.Equals(role, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+
+            foreach (var player in knownMatchesWithRole)
+            {
+                var accountKey = $"{player.gameName}#{player.tagLine}".ToLower();
+                
+                if (usedAccounts.Contains(accountKey))
+                {
+                    Console.WriteLine($"  ⊘ {player.gameName}#{player.tagLine} (role match) déjà utilisé, skip...");
+                    continue;
+                }
+
+                var account = await _riotApi.GetAccountByRiotIdAsync(player.gameName, player.tagLine);
+                if (account != null)
+                {
+                    Console.WriteLine($"  ✓ Joueur connu (role match): {player.gameName}#{player.tagLine} pour {role}");
+                    return (player.gameName, player.tagLine);
+                }
+            }
+
+            // 2. Si pas de match avec le rôle, essayer tous les joueurs connus avec ce pseudo
+            var knownMatches = _knownPlayers
+                .Where(p => p.gameName.Equals(gameName, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+
+            foreach (var player in knownMatches)
+            {
+                var accountKey = $"{player.gameName}#{player.tagLine}".ToLower();
+                
+                if (usedAccounts.Contains(accountKey))
+                {
+                    Console.WriteLine($"  ⊘ {player.gameName}#{player.tagLine} déjà utilisé, skip...");
+                    continue;
+                }
+
+                var account = await _riotApi.GetAccountByRiotIdAsync(player.gameName, player.tagLine);
+                if (account != null)
+                {
+                    Console.WriteLine($"  ✓ Joueur connu disponible: {player.gameName}#{player.tagLine}");
+                    return (player.gameName, player.tagLine);
+                }
+            }
+
+            // 2. Essayer les tagLines courants (en excluant ceux déjà utilisés)
+            Console.WriteLine($"  Recherche de {gameName} avec les tagLines courants...");
+            foreach (var tagLine in _commonTagLines)
+            {
+                var accountKey = $"{gameName}#{tagLine}".ToLower();
+                
+                if (usedAccounts.Contains(accountKey))
+                {
+                    continue; // Ce compte est déjà utilisé
+                }
+
+                var account = await _riotApi.GetAccountByRiotIdAsync(gameName, tagLine);
+                if (account != null)
+                {
+                    Console.WriteLine($"  ✓ Trouvé: {gameName}#{tagLine}");
+                    AddKnownPlayer(gameName, tagLine, role);
+                    return (gameName, tagLine);
+                }
+                
+                await Task.Delay(100);
+            }
+
+            Console.WriteLine($"  ✗ Aucun compte disponible pour: {gameName}");
+            return null;
         }
     }
 }
