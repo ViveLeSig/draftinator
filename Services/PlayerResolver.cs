@@ -180,12 +180,20 @@ namespace OverlayApp.Services
 
             gameName = gameName.Trim();
 
+            Console.WriteLine($"  🔍 Recherche de '{gameName}' (rôle: {role}) parmi {_knownPlayers.Count} joueurs connus");
+            foreach (var kp in _knownPlayers)
+            {
+                Console.WriteLine($"     - {kp.gameName}#{kp.tagLine} (role: {kp.preferredRole})");
+            }
+
             // 1. Vérifier les joueurs connus avec le même rôle en priorité
             var knownMatchesWithRole = _knownPlayers
                 .Where(p => p.gameName.Equals(gameName, StringComparison.OrdinalIgnoreCase))
                 .Where(p => !string.IsNullOrEmpty(p.preferredRole) && 
                            p.preferredRole.Equals(role, StringComparison.OrdinalIgnoreCase))
                 .ToList();
+            
+            Console.WriteLine($"     → {knownMatchesWithRole.Count} match(es) avec rôle");
 
             foreach (var player in knownMatchesWithRole)
             {
@@ -209,6 +217,8 @@ namespace OverlayApp.Services
             var knownMatches = _knownPlayers
                 .Where(p => p.gameName.Equals(gameName, StringComparison.OrdinalIgnoreCase))
                 .ToList();
+            
+            Console.WriteLine($"     → {knownMatches.Count} match(es) total sans filtre de rôle");
 
             foreach (var player in knownMatches)
             {

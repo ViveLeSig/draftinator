@@ -23,31 +23,74 @@ namespace OverlayApp.Services
             _httpClient.DefaultRequestHeaders.Add("X-Riot-Token", _apiKey);
         }
 
+        /// <summary>
+        /// Teste si la clé API est valide en faisant un appel simple
+        /// </summary>
+        public async Task<(bool isValid, string message)> ValidateApiKeyAsync()
+        {
+            try
+            {
+                // Tester avec un compte connu (Riot Games)
+                var url = $"https://{_regionalRoute}.api.riotgames.com/riot/account/v1/accounts/by-riot-id/Riot/EUW";
+                OverlayApp.OverlayForm.LogStatic($"Test validation API: {url}");
+                var response = await _httpClient.GetAsync(url);
+                
+                OverlayApp.OverlayForm.LogStatic($"Status validation: {(int)response.StatusCode} {response.StatusCode}");
+                
+                if (response.StatusCode == System.Net.HttpStatusCode.Unauthorized || 
+                    response.StatusCode == System.Net.HttpStatusCode.Forbidden)
+                {
+                    var errorContent = await response.Content.ReadAsStringAsync();
+                    OverlayApp.OverlayForm.LogStatic($"Erreur API: {errorContent}");
+                    return (false, $"❌ Clé API invalide ou expirée ({(int)response.StatusCode} {response.StatusCode})");
+                }
+                
+                if (response.StatusCode == System.Net.HttpStatusCode.TooManyRequests)
+                {
+                    return (false, "⚠️ Rate limit atteint (429) - la clé est valide mais trop sollicitée");
+                }
+                
+                if (response.IsSuccessStatusCode)
+                {
+                    return (true, "✅ Clé API valide");
+                }
+                
+                var unexpectedError = await response.Content.ReadAsStringAsync();
+                OverlayApp.OverlayForm.LogStatic($"Erreur inattendue: {unexpectedError}");
+                return (false, $"⚠️ Erreur inattendue: {(int)response.StatusCode} {response.StatusCode}");
+            }
+            catch (Exception ex)
+            {
+                OverlayApp.OverlayForm.LogStatic($"Exception validation: {ex}");
+                return (false, $"❌ Erreur de connexion: {ex.Message}");
+            }
+        }
+
         // Account-V1: Récupérer compte par Riot ID (GameName#TagLine)
         public async Task<AccountDto?> GetAccountByRiotIdAsync(string gameName, string tagLine)
         {
             try
             {
                 var url = $"https://{_regionalRoute}.api.riotgames.com/riot/account/v1/accounts/by-riot-id/{gameName}/{tagLine}";
-                Console.WriteLine($"API Call: {url}");
+                OverlayApp.OverlayForm.LogStatic($"API Call: {url}");
                 var response = await _httpClient.GetAsync(url);
                 
-                Console.WriteLine($"Status: {response.StatusCode}");
+                OverlayApp.OverlayForm.LogStatic($"Status: {response.StatusCode}");
                 
                 if (!response.IsSuccessStatusCode)
                 {
                     var errorContent = await response.Content.ReadAsStringAsync();
-                    Console.WriteLine($"Erreur API: {errorContent}");
+                    OverlayApp.OverlayForm.LogStatic($"Erreur API: {errorContent}");
                     return null;
                 }
 
                 var json = await response.Content.ReadAsStringAsync();
-                Console.WriteLine($"Response: {json}");
+                OverlayApp.OverlayForm.LogStatic($"Response: {json}");
                 return JsonSerializer.Deserialize<AccountDto>(json);
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Erreur GetAccountByRiotId: {ex.Message}");
+                OverlayApp.OverlayForm.LogStatic($"Erreur GetAccountByRiotId: {ex.Message}");
                 return null;
             }
         }

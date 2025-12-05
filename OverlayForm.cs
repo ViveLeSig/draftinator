@@ -3,6 +3,7 @@ using System.IO;
 using System.Linq;
 using System.Collections.Generic;
 using System.Drawing;
+using System.Threading.Tasks;
 using System.Windows.Forms;
 using System.Runtime.InteropServices;
 using OverlayApp.Services;
@@ -12,6 +13,29 @@ namespace OverlayApp
 {
     public class OverlayForm : Form
     {
+        private static StreamWriter? _logWriter;
+        
+        public static void LogStatic(string message)
+        {
+            try
+            {
+                if (_logWriter == null)
+                {
+                    _logWriter = new StreamWriter("debug.log", append: true);
+                    _logWriter.AutoFlush = true;
+                }
+                var timestamp = DateTime.Now.ToString("HH:mm:ss.fff");
+                _logWriter.WriteLine($"[{timestamp}] {message}");
+                Console.WriteLine(message);
+            }
+            catch { }
+        }
+        
+        private void Log(string message)
+        {
+            LogStatic(message);
+        }
+
         private RiotApiService? _riotApiService;
         private ScreenCaptureService? _screenCaptureService;
         private DraftOcrService? _draftOcrService;
@@ -19,7 +43,7 @@ namespace OverlayApp
         private ChampionIconService _championIconService;
         private FlowLayoutPanel playerStatsContainer;
         private Button refreshButton;
-        private bool _useOcr = false;
+        private bool _useOcr = true;
         private System.Windows.Forms.Timer? _topMostTimer;
         private System.Windows.Forms.Timer? _draftDetectionTimer;
         private Label? _statusLabel;
@@ -292,22 +316,47 @@ namespace OverlayApp
             {
                 if (System.IO.File.Exists("riot_api_key.txt"))
                 {
-                    var apiKey = System.IO.File.ReadAllText("riot_api_key.txt");
+                    var apiKey = System.IO.File.ReadAllText("riot_api_key.txt").Trim();
                     if (!string.IsNullOrWhiteSpace(apiKey))
                     {
                         _riotApiService = new RiotApiService(apiKey, "euw1", "europe");
                         _playerResolver = new PlayerResolver(_riotApiService);
-                        Console.WriteLine("Clé API chargée depuis le fichier");
+                        Log("Clé API chargée depuis le fichier");
+                        
+                        // Validation asynchrone de la clé API
+                        Task.Run(async () =>
+                        {
+                            var (isValid, message) = await _riotApiService.ValidateApiKeyAsync();
+                            Log($"Validation clé API: {message}");
+                            
+                            if (!isValid)
+                            {
+                                // Afficher un message à l'utilisateur
+                                this.Invoke((Action)(() =>
+                                {
+                                    MessageBox.Show(
+                                        $"{message}\n\n" +
+                                        "Veuillez mettre à jour votre clé API dans le fichier riot_api_key.txt\n\n" +
+                                        "1. Aller sur https://developer.riotgames.com/\n" +
+                                        "2. Se connecter\n" +
+                                        "3. Régénérer une clé (valide 24h)\n" +
+                                        "4. Remplacer le contenu de riot_api_key.txt",
+                                        "Clé API invalide",
+                                        MessageBoxButtons.OK,
+                                        MessageBoxIcon.Warning);
+                                }));
+                            }
+                        });
                     }
                 }
                 else
                 {
-                    Console.WriteLine("ATTENTION: Fichier riot_api_key.txt introuvable!");
+                    Log("ATTENTION: Fichier riot_api_key.txt introuvable!");
                 }
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Erreur chargement clé API: {ex.Message}");
+                Log($"Erreur chargement clé API: {ex.Message}");
             }
         }
 
@@ -618,19 +667,27 @@ namespace OverlayApp
             else
             {
                 // Mode test: utiliser les joueurs de test hardcodés
+                Log("=== MODE TEST ===");
                 playersToAnalyze = new List<(string, string)>
                 {
                     ("Darioush#CRABE", "TOP"),
                     ("OUGOUG#SINJ3", "JUNGLE"),
                     ("OUGOUG#SINJ2", "MID"),
-                    ("OUGOUG#SINJ4", "BOTTOM"),
-                    ("IdRatherPlayPkm#Isck", "SUPPORT")
+                    ("OUGOUG#SINJ4", "SUPPORT"),
+                    ("IdRatherPlayPkm#Isck", "BOTTOM")
                 };
+                Log($"Joueurs de test: {playersToAnalyze.Count}");
+                foreach (var p in playersToAnalyze)
+                {
+                    Log($"  - {p.Item1} ({p.Item2})");
+                }
             }
 
             foreach (var (playerName, role) in playersToAnalyze)
             {
+                Log($"\n=== Traitement de {playerName} ({role}) ===");
                 var parts = playerName.Split('#');
+                Log($"Parts: {string.Join(", ", parts)} (length: {parts.Length})");
                 if (parts.Length < 1) continue;
 
                 var panel = new PlayerStatsPanel(_championIconService);
@@ -645,7 +702,9 @@ namespace OverlayApp
                     if (parts.Length == 2)
                     {
                         // Format complet: Pseudo#TAG
+                        Log($"Appel API: GetPlayerStatsAsync('{parts[0]}', '{parts[1]}')");
                         stats = await _riotApiService.GetPlayerStatsAsync(parts[0], parts[1]);
+                        Log($"Stats reçues: {(stats != null ? "OK" : "NULL")}");
                     }
                     else
                     {
