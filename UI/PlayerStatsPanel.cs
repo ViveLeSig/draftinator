@@ -100,7 +100,12 @@ namespace OverlayApp.UI
 
         private Panel CreateChampionMasteryItem(ChampionMasteryDto champion)
         {
-            var masteryColor = GetMasteryColor(champion.ChampionLevel);
+            // Calculer le vrai niveau de maîtrise (M1-M7) basé sur les points et tokens
+            int masteryLevel = CalculateMasteryLevel(champion);
+            var masteryColor = GetMasteryColor(masteryLevel);
+            
+            // Debug: logger la couleur
+            OverlayApp.OverlayForm.LogStatic($"Champion {champion.ChampionId} - ChampLevel: {champion.ChampionLevel}, Points: {champion.ChampionPoints}, Tokens: {champion.TokensEarned}, MasteryLevel: {masteryLevel} - Color: {masteryColor.R},{masteryColor.G},{masteryColor.B}");
             
             var panel = new Panel
             {
@@ -149,7 +154,7 @@ namespace OverlayApp.UI
             
             var badgeLabel = new Label
             {
-                Text = champion.ChampionLevel.ToString(),
+                Text = masteryLevel.ToString(),
                 Font = new Font("Segoe UI", 8, FontStyle.Bold),
                 ForeColor = Color.White,
                 TextAlign = ContentAlignment.MiddleCenter,
@@ -178,6 +183,46 @@ namespace OverlayApp.UI
             panel.Controls.Add(pointsLabel);
             
             return panel;
+        }
+
+        /// <summary>
+        /// Calcule le niveau de maîtrise (M1-M7) basé sur les points et tokens
+        /// </summary>
+        private int CalculateMasteryLevel(ChampionMasteryDto champion)
+        {
+            int points = champion.ChampionPoints;
+            int tokens = champion.TokensEarned;
+            
+            // M7 = 21600+ points + 3 tokens (ou 2 tokens dans l'ancien système)
+            if (points >= 21600 && tokens >= 2)
+                return 7;
+            
+            // M6 = 12600+ points + 2 tokens (ou 1 token dans l'ancien système)
+            if (points >= 12600 && tokens >= 1)
+                return 6;
+            
+            // M5 = 21600+ points
+            if (points >= 21600)
+                return 5;
+            
+            // M4 = 15600-21599 points
+            if (points >= 15600)
+                return 4;
+            
+            // M3 = 12600-15599 points
+            if (points >= 12600)
+                return 3;
+            
+            // M2 = 6000-12599 points
+            if (points >= 6000)
+                return 2;
+            
+            // M1 = 1800-5999 points
+            if (points >= 1800)
+                return 1;
+            
+            // M0 = moins de 1800 points
+            return 0;
         }
 
         private Color GetMasteryColor(int level)
