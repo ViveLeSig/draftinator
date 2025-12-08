@@ -21,8 +21,8 @@ jobs:
       with:
         dotnet-version: 8.0.x
     - name: Restore dependencies
-      run: dotnet restore
+      run: dotnet restore OverlayApp.csproj
     - name: Build
-      run: dotnet build --no-restore
+      run: dotnet build OverlayApp.csproj --no-restore
     - name: Test
-      run: dotnet test --no-build --verbosity normal
+      run: dotnet test OverlayApp.csproj --no-build --verbosity normal
