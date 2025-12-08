@@ -95,3 +95,11 @@ Thumbs.db
 *.pdb
 !**/bin/Release/**/publish/*.dll
 !**/bin/Release/**/publish/*.exe
+
+# Debug images
+debug_*.png
+debug_*.jpg
+debug_*.bmp
+detection_*.png
+detection_*.jpg
+detection_*.bmp

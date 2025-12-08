@@ -73,5 +73,35 @@
     "gameName": "106",
     "tagLine": "EUW",
     "preferredRole": "UNKNOWN"
+  },
+  {
+    "gameName": "SIVIR",
+    "tagLine": "EUW",
+    "preferredRole": "BOTTOM"
+  },
+  {
+    "gameName": "BLITZCRANK",
+    "tagLine": "EUW",
+    "preferredRole": "SUPPORT"
+  },
+  {
+    "gameName": "LUX",
+    "tagLine": "EUW",
+    "preferredRole": "MID"
+  },
+  {
+    "gameName": "MUNDO",
+    "tagLine": "EUW",
+    "preferredRole": "JUNGLE"
+  },
+  {
+    "gameName": "380",
+    "tagLine": "EUW",
+    "preferredRole": "JUNGLE"
+  },
+  {
+    "gameName": "MILIEU",
+    "tagLine": "EUW",
+    "preferredRole": "MID"
   }
 ]

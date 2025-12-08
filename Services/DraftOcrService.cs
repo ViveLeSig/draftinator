@@ -43,14 +43,18 @@ namespace OverlayApp.Services
 
             if (_ocrEngine == null)
             {
-                Console.WriteLine("OCR non initialisé");
+                Console.WriteLine("❌ OCR non initialisé");
                 return players;
             }
+
+            Console.WriteLine($"🔍 Détection OCR: {_playerRegions.Count} régions configurées");
 
             // Détecter les 5 joueurs
             for (int i = 0; i < _playerRegions.Count && i < 5; i++)
             {
                 var region = _playerRegions[i];
+                Console.WriteLine($"\n📍 Joueur {i + 1} - Zone: X={region.PlayerX}, Y={region.PlayerY}, W={region.PlayerWidth}, H={region.PlayerHeight}");
+                
                 try
                 {
                     // Détecter le pseudo du joueur
@@ -66,16 +70,22 @@ namespace OverlayApp.Services
                         {
                             var text = page.GetText().Trim();
                             playerName = ExtractPlayerName(text);
-                            Console.WriteLine($"Joueur {i + 1} détecté: {playerName} (Confiance: {page.GetMeanConfidence():F2})");
+                            Console.WriteLine($"   OCR brut: '{text}'");
+                            Console.WriteLine($"   Extrait: '{playerName}' (Confiance: {page.GetMeanConfidence():F2})");
                         }
                         processedImage.Dispose();
                         screenshot.Dispose();
+                    }
+                    else
+                    {
+                        Console.WriteLine($"   ❌ Capture échouée");
                     }
 
                     // Détecter le rôle au-dessus du pseudo
                     string role = "UNKNOWN";
                     if (region.RoleX > 0 && region.RoleY > 0)
                     {
+                        Console.WriteLine($"   Rôle - Zone: X={region.RoleX}, Y={region.RoleY}, W={region.RoleWidth}, H={region.RoleHeight}");
                         var roleScreenshot = _screenCapture.CaptureScreenRegion(
                             region.RoleX, region.RoleY, region.RoleWidth, region.RoleHeight);
 
@@ -87,7 +97,7 @@ namespace OverlayApp.Services
                             {
                                 var roleText = page.GetText().Trim().ToUpper();
                                 role = ExtractRole(roleText);
-                                Console.WriteLine($"Rôle détecté: {role}");
+                                Console.WriteLine($"   Rôle OCR: '{roleText}' → '{role}'");
                             }
                             processedRoleImage.Dispose();
                             roleScreenshot.Dispose();
@@ -96,6 +106,7 @@ namespace OverlayApp.Services
 
                     if (!string.IsNullOrEmpty(playerName))
                     {
+                        Console.WriteLine($"   ✅ Joueur ajouté: {playerName} ({role})");
                         players.Add(new PlayerDraftInfo
                         {
                             PlayerName = playerName,
@@ -104,13 +115,21 @@ namespace OverlayApp.Services
                             PlayerIndex = i + 1
                         });
                     }
+                    else
+                    {
+                        Console.WriteLine($"   ⚠️ Pseudo vide, joueur ignoré");
+                    }
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"Erreur OCR pour Joueur {i + 1}: {ex.Message}");
+                    Console.WriteLine($"   ❌ Erreur OCR: {ex.Message}");
                 }
             }
 
+            // Déduire les rôles manquants pour les joueurs avec UNKNOWN
+            DeduceMissingRoles(players);
+
+            Console.WriteLine($"\n📊 Total détecté: {players.Count} joueur(s)");
             return players;
         }
 
@@ -197,6 +216,31 @@ namespace OverlayApp.Services
             if (ocrText.Contains("SUP") || ocrText.Contains("SUPPORT")) return "SUPPORT";
 
             return "UNKNOWN";
+        }
+
+        /// <summary>
+        /// Déduit les rôles manquants pour les joueurs avec UNKNOWN
+        /// en trouvant les rôles qui n'ont pas encore été assignés
+        /// </summary>
+        private void DeduceMissingRoles(List<PlayerDraftInfo> players)
+        {
+            var allRoles = new HashSet<string> { "TOP", "JUNGLE", "MID", "BOTTOM", "SUPPORT" };
+            var assignedRoles = new HashSet<string>(
+                players.Where(p => p.Role != "UNKNOWN").Select(p => p.Role)
+            );
+            var missingRoles = allRoles.Except(assignedRoles).ToList();
+            
+            if (missingRoles.Count > 0)
+            {
+                Console.WriteLine($"\n🔍 Rôles manquants détectés: {string.Join(", ", missingRoles)}");
+                
+                var unknownPlayers = players.Where(p => p.Role == "UNKNOWN").ToList();
+                for (int i = 0; i < unknownPlayers.Count && i < missingRoles.Count; i++)
+                {
+                    unknownPlayers[i].Role = missingRoles[i];
+                    Console.WriteLine($"   ✓ Rôle assigné: {unknownPlayers[i].PlayerName} → {missingRoles[i]}");
+                }
+            }
         }
 
         private byte[] BitmapToByteArray(Bitmap bitmap)

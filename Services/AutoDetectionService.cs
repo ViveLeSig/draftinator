@@ -29,45 +29,58 @@ namespace OverlayApp.Services
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Erreur initialisation Tesseract: {ex.Message}");
+                OverlayApp.OverlayForm.LogStatic($"Erreur initialisation Tesseract: {ex.Message}");
             }
         }
 
         public List<(Rectangle playerRegion, Rectangle roleRegion, string playerName, string role)> AutoDetectPlayers(
             int searchX, int searchY, int searchWidth, int searchHeight)
         {
+            OverlayApp.OverlayForm.LogStatic($"🔬 DÉBUT AutoDetectPlayers: X={searchX}, Y={searchY}, W={searchWidth}, H={searchHeight}");
+            OverlayApp.OverlayForm.LogStatic($"📂 Working Directory: {Directory.GetCurrentDirectory()}");
+            
             if (_tesseractEngine == null)
             {
-                Console.WriteLine("Tesseract non initialisé");
+                OverlayApp.OverlayForm.LogStatic("❌ Tesseract non initialisé");
                 return new List<(Rectangle, Rectangle, string, string)>();
             }
+            
+            OverlayApp.OverlayForm.LogStatic("✅ Tesseract initialisé");
 
             var results = new List<(Rectangle playerRegion, Rectangle roleRegion, string playerName, string role)>();
 
             try
             {
+                OverlayApp.OverlayForm.LogStatic("📸 Capture de l'écran...");
                 // Capturer la région de recherche
                 var searchBitmap = _screenCapture.CaptureScreenRegion(searchX, searchY, searchWidth, searchHeight);
                 if (searchBitmap == null)
                 {
-                    Console.WriteLine("Erreur capture bitmap");
+                    OverlayApp.OverlayForm.LogStatic("❌ Erreur capture bitmap");
                     return results;
                 }
                 
                 // Sauvegarder pour debug
-                searchBitmap.Save("debug_capture.png");
-                Console.WriteLine("Capture sauvegardée dans debug_capture.png");
+                searchBitmap.Save("debug_capture_original.png");
+                OverlayApp.OverlayForm.LogStatic("📸 Capture originale sauvegardée dans debug_capture_original.png");
+                
+                // PRÉTRAITEMENT POUR AMÉLIORER LA DÉTECTION
+                var processedBitmap = PreprocessImageForOCR(searchBitmap);
+                processedBitmap.Save("debug_capture_processed.png");
+                OverlayApp.OverlayForm.LogStatic("🎨 Image traitée sauvegardée dans debug_capture_processed.png");
                 
                 // Convertir en format Tesseract
-                var pixData = BitmapToByteArray(searchBitmap);
+                var pixData = BitmapToByteArray(processedBitmap);
                 using var pix = Pix.LoadFromMemory(pixData);
                 using var page = _tesseractEngine.Process(pix);
+                
+                processedBitmap.Dispose();
 
                 // Extraire tout le texte détecté
                 var fullText = page.GetText();
-                Console.WriteLine($"=== Texte OCR détecté ===");
-                Console.WriteLine(fullText);
-                Console.WriteLine($"========================");
+                OverlayApp.OverlayForm.LogStatic($"=== Texte OCR détecté ===");
+                OverlayApp.OverlayForm.LogStatic(fullText);
+                OverlayApp.OverlayForm.LogStatic($"========================");
 
                 // Extraire tous les mots avec leurs positions
                 var wordData = new List<(string text, Rectangle bounds, float confidence)>();
@@ -91,13 +104,13 @@ namespace OverlayApp.Services
                                     bounds.Height
                                 );
                                 wordData.Add((word.Trim(), adjustedBounds, confidence));
-                                Console.WriteLine($"Mot: '{word.Trim()}' à Y={adjustedBounds.Y} (conf: {confidence:F1}%)");
+                                OverlayApp.OverlayForm.LogStatic($"Mot: '{word.Trim()}' à Y={adjustedBounds.Y} (conf: {confidence:F1}%)");
                             }
                         }
                     } while (iter.Next(PageIteratorLevel.Word));
                 }
 
-                Console.WriteLine($"\n=== {wordData.Count} mots détectés ===");
+                OverlayApp.OverlayForm.LogStatic($"\n=== {wordData.Count} mots détectés ===");
                 
                 // Stratégie basée sur le screenshot : chercher les marqueurs "Banning..." ou les rôles
                 // Les joueurs sont dans la partie gauche, avec rôle au-dessus du pseudo
@@ -110,15 +123,16 @@ namespace OverlayApp.Services
                     if (role != "INCONNU")
                     {
                         rolePositions.Add((role, bounds.Y, bounds));
-                        Console.WriteLine($"Rôle trouvé: {role} à Y={bounds.Y}");
+                        OverlayApp.OverlayForm.LogStatic($"Rôle trouvé: {role} à Y={bounds.Y}");
                     }
                 }
 
                 // Trier les rôles par position Y
                 rolePositions = rolePositions.OrderBy(r => r.y).ToList();
-                Console.WriteLine($"\n{rolePositions.Count} rôles détectés");
+                OverlayApp.OverlayForm.LogStatic($"\n{rolePositions.Count} rôles détectés");
 
                 // Pour chaque rôle, chercher le pseudo juste en dessous (dans les 60px)
+                var detectedPlayerYPositions = new List<int>();
                 foreach (var (role, roleY, roleBounds) in rolePositions)
                 {
                     // Chercher des mots dans une zone en dessous du rôle
@@ -132,7 +146,17 @@ namespace OverlayApp.Services
 
                     if (candidateWords.Any())
                     {
-                        var playerWord = candidateWords.First();
+                        // Prendre le mot le plus long et avec la meilleure confiance (généralement le pseudo)
+                        // car les noms de champions sont souvent plus courts ou mal détectés
+                        var playerWord = candidateWords
+                            .Where(w => w.confidence > 40)
+                            .OrderByDescending(w => w.text.Length)
+                            .ThenByDescending(w => w.confidence)
+                            .FirstOrDefault();
+                        
+                        if (playerWord.text == null)
+                            playerWord = candidateWords.First();
+                        
                         var playerName = playerWord.text;
                         var playerBounds = playerWord.bounds;
                         
@@ -145,9 +169,48 @@ namespace OverlayApp.Services
                         roleRegion.Height = Math.Max(25, roleRegion.Height);
 
                         results.Add((playerBounds, roleRegion, playerName, role));
-                        Console.WriteLine($"✓ Joueur détecté: {playerName} ({role}) à Y={playerBounds.Y}");
+                        detectedPlayerYPositions.Add(playerBounds.Y);
+                        OverlayApp.OverlayForm.LogStatic($"✓ Joueur détecté: {playerName} ({role}) à Y={playerBounds.Y}");
+                    }
+                }
+
+                // Si on a moins de 5 joueurs, chercher les pseudos sans rôle détecté
+                if (results.Count < 5)
+                {
+                    OverlayApp.OverlayForm.LogStatic($"\n🔍 Recherche des joueurs sans rôle détecté ({results.Count}/5)...");
+                    
+                    var allRoles = new HashSet<string> { "TOP", "JUNGLE", "MID", "BOTTOM", "SUPPORT" };
+                    var foundRoles = new HashSet<string>(results.Select(r => r.role));
+                    var missingRoles = allRoles.Except(foundRoles).ToList();
+                    
+                    OverlayApp.OverlayForm.LogStatic($"Rôles manquants: {string.Join(", ", missingRoles)}");
+                    
+                    // Chercher les noms de joueurs qui n'ont pas encore été détectés
+                    var undetectedPlayers = wordData
+                        .Where(w => w.text.Length >= 5) // Pseudo probable
+                        .Where(w => !detectedPlayerYPositions.Any(y => Math.Abs(w.bounds.Y - y) < 50)) // Pas déjà détecté
+                        .Where(w => !_roleKeywords.Any(r => w.text.ToUpper().Contains(r))) // Pas un rôle
+                        .Where(w => !w.text.ToUpper().Contains("COURS")) // Pas "En cours"
+                        .OrderBy(w => w.bounds.Y)
+                        .ToList();
+                    
+                    foreach (var player in undetectedPlayers)
+                    {
+                        if (results.Count >= 5 || missingRoles.Count == 0) break;
                         
-                        if (results.Count >= 5) break;
+                        var playerBounds = player.bounds;
+                        playerBounds.Width = Math.Max(150, playerBounds.Width);
+                        playerBounds.Height = Math.Max(30, playerBounds.Height);
+                        
+                        // Chercher le rôle au-dessus (dans les 60px)
+                        var roleRegion = new Rectangle(playerBounds.X, Math.Max(0, playerBounds.Y - 50), 100, 25);
+                        
+                        // Assigner le premier rôle manquant (généralement TOP)
+                        var assignedRole = missingRoles.First();
+                        missingRoles.RemoveAt(0);
+                        
+                        results.Add((playerBounds, roleRegion, player.text, assignedRole));
+                        OverlayApp.OverlayForm.LogStatic($"✓ Joueur détecté (sans rôle OCR): {player.text} ({assignedRole}) à Y={playerBounds.Y}");
                     }
                 }
 
@@ -155,8 +218,8 @@ namespace OverlayApp.Services
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Erreur auto-détection: {ex.Message}");
-                Console.WriteLine($"Stack: {ex.StackTrace}");
+                OverlayApp.OverlayForm.LogStatic($"Erreur auto-détection: {ex.Message}");
+                OverlayApp.OverlayForm.LogStatic($"Stack: {ex.StackTrace}");
             }
 
             return results;
@@ -213,13 +276,13 @@ namespace OverlayApp.Services
                 
             var upperText = text.ToUpper().Replace(" ", "").Replace(".", "").Replace(",", "");
             
-            if (upperText.Contains("TOP"))
+            if (upperText.Contains("TOP") || upperText.Contains("HAUT"))
                 return "TOP";
             if (upperText.Contains("JUNGLE") || upperText.Contains("JGL") || upperText.Contains("JUNGL"))
                 return "JUNGLE";
-            if (upperText.Contains("MID") || upperText.Contains("MIDDLE"))
+            if (upperText.Contains("MID") || upperText.Contains("MIDDLE") || upperText.Contains("MILIEU"))
                 return "MID";
-            if (upperText.Contains("BOTTOM") || upperText.Contains("BOT") || upperText.Contains("ADC"))
+            if (upperText.Contains("BOTTOM") || upperText.Contains("BOT") || upperText.Contains("ADC") || upperText.Contains("BAS"))
                 return "BOTTOM";
             if (upperText.Contains("SUPPORT") || upperText.Contains("SUP") || upperText.Contains("SUPP"))
                 return "SUPPORT";
@@ -240,6 +303,49 @@ namespace OverlayApp.Services
             return new Rectangle(minX, minY, maxX - minX, maxY - minY);
         }
 
+        private Bitmap PreprocessImageForOCR(Bitmap original)
+        {
+            // Créer une nouvelle image avec taille augmentée (x3 pour meilleure résolution OCR)
+            int newWidth = original.Width * 3;
+            int newHeight = original.Height * 3;
+            var enlarged = new Bitmap(newWidth, newHeight);
+
+            using (var g = Graphics.FromImage(enlarged))
+            {
+                g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
+                g.DrawImage(original, 0, 0, newWidth, newHeight);
+            }
+
+            OverlayApp.OverlayForm.LogStatic($"🔍 Image agrandie: {original.Width}x{original.Height} → {newWidth}x{newHeight}");
+
+            // Convertir en niveaux de gris et augmenter le contraste
+            var processed = new Bitmap(newWidth, newHeight);
+            
+            for (int y = 0; y < newHeight; y++)
+            {
+                for (int x = 0; x < newWidth; x++)
+                {
+                    var pixel = enlarged.GetPixel(x, y);
+                    
+                    // Convertir en niveau de gris
+                    int gray = (int)(pixel.R * 0.3 + pixel.G * 0.59 + pixel.B * 0.11);
+                    
+                    // Seuillage adaptatif : texte blanc sur fond sombre
+                    // Si le pixel est assez clair, le rendre blanc, sinon noir
+                    int threshold = 100; // Ajuster selon luminosité du texte
+                    int newValue = gray > threshold ? 255 : 0;
+                    
+                    var newColor = Color.FromArgb(newValue, newValue, newValue);
+                    processed.SetPixel(x, y, newColor);
+                }
+            }
+
+            enlarged.Dispose();
+            OverlayApp.OverlayForm.LogStatic("✅ Prétraitement terminé: contraste élevé, noir et blanc");
+            
+            return processed;
+        }
+
         private byte[] BitmapToByteArray(Bitmap bitmap)
         {
             using var ms = new System.IO.MemoryStream();
@@ -253,3 +359,4 @@ namespace OverlayApp.Services
         }
     }
 }
+
